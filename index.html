@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>鳴きジャグ化アプリ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@500;700;900&family=Noto+Sans+JP:wght@700;900&display=swap');
+
+    :root {
+      --bg-dark: #090b10;
+      --surface-glass: rgba(18, 22, 33, 0.88);
+      --border-glass: rgba(255, 255, 255, 0.14);
+      --accent-primary: #38bdf8;
+      --accent-secondary: #f43f5e;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--bg-dark);
+      color: #f8fafc;
+      font-family: 'Noto Sans JP', 'Inter', sans-serif;
+      touch-action: manipulation;
+    }
+
+    /* 端末の向き・上下逆さま回転ラッパー */
+    #orientation-stage {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), width 0.25s ease, height 0.25s ease;
+      transform-origin: center center;
+    }
+
+    /* カメラ映像 */
+    #camera-video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 1;
+      background: #05070c;
+    }
+
+    /* 透過性 七色イルミネーション枠 */
+    #rainbow-illumination {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 15;
+      opacity: 0;
+      transition: opacity 0.12s ease;
+      box-shadow:
+        inset 0 0 42px 14px rgba(255, 0, 85, 0.55),
+        inset 0 0 85px 26px rgba(0, 229, 255, 0.45),
+        inset 0 0 130px 42px rgba(255, 214, 0, 0.38);
+      border: 8px solid transparent;
+      background:
+        linear-gradient(90deg,
+          rgba(255, 0, 76, 0.22),
+          rgba(255, 136, 0, 0.22),
+          rgba(255, 238, 0, 0.22),
+          rgba(0, 230, 118, 0.22),
+          rgba(0, 176, 255, 0.22),
+          rgba(124, 77, 255, 0.22),
+          rgba(255, 0, 170, 0.22)
+        ) border-box;
+      -webkit-mask:
+        linear-gradient(#fff 0 0) padding-box,
+        linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+    }
+
+    #rainbow-illumination.active {
+      opacity: 1;
+      animation: rainbowPulse 1.3s linear infinite;
+    }
+
+    @keyframes rainbowPulse {
+      0% {
+        filter: hue-rotate(0deg) saturate(1.35);
+      }
+      50% {
+        filter: hue-rotate(180deg) saturate(1.55);
+      }
+      100% {
+        filter: hue-rotate(360deg) saturate(1.35);
+      }
+    }
+
+    /* 流れるテキストレイヤー */
+    #marquee-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      overflow: hidden;
+      display: none;
+    }
+
+    #marquee-layer.active {
+      display: block;
+    }
+
+    .marquee-item {
+      position: absolute;
+      white-space: nowrap;
+      font-weight: 900;
+      line-height: 1.08;
+      letter-spacing: 0.04em;
+      color: #ffffff;
+      text-shadow:
+        0 0 14px rgba(255, 255, 255, 0.95),
+        0 0 32px rgba(255, 20, 147, 0.9),
+        0 6px 24px rgba(0, 0, 0, 0.85),
+        -3px -3px 0 #ff0055,
+         3px -3px 0 #ff0055,
+        -3px  3px 0 #00aaff,
+         3px  3px 0 #00aaff;
+      will-change: transform;
+    }
+
+    /* フローティングUI（待機画面・最小限の操作ボタンのみ） */
+    #hud-controls {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      pointer-events: none;
+    }
+
+    .hud-interactive {
+      pointer-events: auto;
+    }
+
+    /* メニューモーダル */
+    #settings-drawer {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(3, 6, 12, 0.78);
+      backdrop-filter: blur(10px);
+      display: none;
+      justify-content: flex-end;
+    }
+
+    #settings-drawer.open {
+      display: flex;
+    }
+
+    .drawer-panel {
+      width: 100%;
+      max-width: 520px;
+      height: 100%;
+      background: #111622;
+      border-left: 1px solid rgba(255, 255, 255, 0.14);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: -16px 0 48px rgba(0, 0, 0, 0.65);
+    }
+
+    .drawer-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem 1.25rem 6rem 1.25rem;
+      user-select: text;
+    }
+
+    /* 権限ゲートオーバーレイ */
+    #permission-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      background: radial-gradient(circle at top, #172036 0%, #07090f 75%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem;
+      overflow-y: auto;
+    }
+
+    #permission-overlay.hidden-gate {
+      display: none;
+    }
+
+    /* スクロールバー装飾 */
+    .drawer-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+    .drawer-scroll::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.35);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body>
+  <!-- 向き回転ステージ -->
+  <div id="orientation-stage">
+    <!-- 常時カメラ映像 -->
+    <video id="camera-video" autoplay playsinline muted></video>
+
+    <!-- 光検知時：透過性七色イルミネーション -->
+    <div id="rainbow-illumination" aria-hidden="true"></div>
+
+    <!-- 光検知時：流れる文字レイヤー -->
+    <div id="marquee-layer" aria-hidden="true"></div>
+
+    <!-- 待機・検知中のHUDコントロール -->
+    <div id="hud-controls">
+      <!-- 右上メニューボタン -->
+      <div class="hud-interactive fixed top-3 right-3 z-30 flex items-center gap-2">
+        <button
+          id="open-menu-btn"
+          type="button"
+          class="px-4 py-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-white font-bold text-sm border border-white/20 shadow-lg backdrop-blur-md transition"
+          aria-label="メニューを開く"
+        >
+          メニュー
+        </button>
+      </div>
+
+      <!-- 光待機画面の秒数ストップボタン（x秒カウント制御） -->
+      <div id="stop-timer-container" class="hud-interactive fixed bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2">
+        <button
+          id="stop-seconds-btn"
+          type="button"
+          class="px-5 py-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-amber-300 font-bold text-sm border border-amber-400/40 shadow-xl backdrop-blur-md transition"
+        >
+          秒数ストップ
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 起動時カメラ権限リクエスト・エラー案内オーバーレイ -->
+  <div id="permission-overlay">
+    <div class="w-full max-w-md rounded-3xl bg-slate-900/90 border border-white/15 p-6 shadow-2xl space-y-5">
+      <div class="space-y-1.5">
+        <h1 class="text-2xl font-black tracking-tight text-white">鳴きジャグ化アプリ</h1>
+        <p id="perm-description" class="text-sm text-slate-300 leading-relaxed">
+          光を感じて演出するためにカメラへのアクセス許可が必要です。許可するとバックカメラが起動します。
+        </p>
+      </div>
+
+      <!-- エラー・権限案内ボックス（必要時のみ表示） -->
+      <div id="perm-error-box" class="hidden rounded-2xl bg-rose-950/70 border border-rose-500/40 p-4 space-y-2.5 text-sm text-rose-100">
+        <div id="perm-error-title" class="font-bold text-rose-300">カメラを起動できませんでした</div>
+        <p id="perm-error-detail" class="text-xs leading-relaxed text-rose-100/90"></p>
+        <div class="pt-1 flex flex-wrap gap-2">
+          <button
+            id="open-browser-settings-btn"
+            type="button"
+            class="px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs transition"
+          >
+            ブラウザの権限設定を開く
+          </button>
+          <button
+            id="retry-camera-btn"
+            type="button"
+            class="px-3.5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 active:scale-95 text-slate-950 font-bold text-xs transition"
+          >
+            再試行する
+          </button>
+        </div>
+        <div id="browser-guide-panel" class="hidden mt-2 rounded-xl bg-slate-950/80 border border-white/10 p-3 text-xs text-slate-300 space-y-1.5">
+          <div class="font-bold text-amber-300">ブラウザ権限の確認手順</div>
+          <p>1. アドレスバー左側の鍵アイコンまたは設定アイコンをタップします。</p>
+          <p>2. 「カメラ」を「許可」に変更します。</p>
+          <p>3. 他のアプリや別タブでカメラを使用中の場合は終了してから「再試行する」を押してください。</p>
+          <p>4. 埋め込み枠（iframe）で開いている場合は、別タブで開くと権限が通りやすくなります。</p>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-2.5">
+        <button
+          id="request-camera-btn"
+          type="button"
+          class="w-full py-3.5 px-5 rounded-2xl bg-sky-400 hover:bg-sky-300 active:scale-98 text-slate-950 font-black text-base shadow-lg shadow-sky-500/25 transition"
+        >
+          カメラ権限を許可して開始
+        </button>
+        <button
+          id="fullscreen-only-btn"
+          type="button"
+          class="w-full py-2.5 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-98 text-slate-200 font-bold text-xs border border-white/10 transition"
+        >
+          全画面表示を試行
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定メニュードロワー -->
+  <div id="settings-drawer" role="dialog" aria-modal="true" aria-label="設定メニュー">
+    <div class="drawer-panel">
+      <!-- ドロワーヘッダー -->
+      <div class="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-slate-900/95">
+        <h2 class="text-lg font-black text-white">設定メニュー</h2>
+        <button
+          id="close-menu-btn"
+          type="button"
+          class="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 active:scale-95 text-white font-bold text-sm transition"
+        >
+          設定を閉じる
+        </button>
+      </div>
+
+      <!-- スクロール設定フォーム -->
+      <div class="drawer-scroll space-y-5">
+        <!-- カメラ・しきい値・画面向き -->
+        <section class="rounded-2xl bg-slate-800/60 border border-white/10 p-4 space-y-3.5">
+          <h3 class="text-sm font-black text-sky-300">カメラ・検知設定</h3>
+
+          <div>
+            <label for="camera-facing-select" class="block text-xs font-bold text-slate-200 mb-1.5">
+              カメラ選択
+            </label>
+            <select
+              id="camera-facing-select"
+              class="w-full rounded-xl bg-slate-950 border border-white/15 px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-sky-400"
+            >
+              <option value="environment">バックカメラ</option>
+              <option value="user">フロントカメラ</option>
+            </select>
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label for="threshold-input" class="text-xs font-bold text-slate-200">
+                光のしきい値（1 〜 255）
+              </label>
+              <span id="threshold-value-badge" class="text-xs font-black text-amber-300">180</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <input
+                id="threshold-range"
+                type="range"
+                min="1"
+                max="255"
+                value="180"
+                class="flex-1 accent-sky-400"
+              />
+              <input
+                id="threshold-input"
+                type="number"
+                min="1"
+                max="255"
+                value="180"
+                class="w-24 rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-sm text-white text-right focus:outline-none focus:border-sky-400"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label for="orientation-mode-select" class="block text-xs font-bold text-slate-200 mb-1.5">
+              画面の向き・上下逆さま補正
+            </label>
+            <select
+              id="orientation-mode-select"
+              class="w-full rounded-xl bg-slate-950 border border-white/15 px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-sky-400"
+            >
+              <option value="auto">自動検知（縦・横・上下逆さま対応）</option>
+              <option value="0">正位置（0°）</option>
+              <option value="90">右回転（90°）</option>
+              <option value="180">上下逆さま（180°）</option>
+              <option value="270">左回転（270°）</option>
+            </select>
+          </div>
+        </section>
+
+        <!-- 音源アップロード（最大5つ） -->
+        <section class="rounded-2xl bg-slate-800/60 border border-white/10 p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-black text-sky-300">音源アップロード（最大5つ）</h3>
+            <span id="uploaded-count-badge" class="text-xs font-bold text-slate-300">0 / 5</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            音声ファイル（MP3 / WAV / OGG / M4A など）を最大5つまで追加できます。
+          </p>
+          <input
+            id="audio-upload-input"
+            type="file"
+            accept="audio/*"
+            multiple
+            class="block w-full text-xs text-slate-200 file:mr-3 file:py-2.5 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-sky-400 file:text-slate-950 hover:file:bg-sky-300 cursor-pointer"
+          />
+          <ul id="uploaded-audio-list" class="space-y-2 text-xs"></ul>
+        </section>
+
+        <!-- 1回目（通常時）の文字・音・再生回数・速さ -->
+        <section class="rounded-2xl bg-slate-800/60 border border-white/10 p-4 space-y-3.5">
+          <h3 class="text-sm font-black text-emerald-300">通常時（1回目）の演出設定</h3>
+
+          <div>
+            <label for="normal-text-input" class="block text-xs font-bold text-slate-200 mb-1.5">
+              流れる文字
+            </label>
+            <input
+              id="normal-text-input"
+              type="text"
+              value="ｷﾀ━(ﾟ∀ﾟ)━!!"
+              class="w-full rounded-xl bg-slate-950 border border-white/15 px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-400"
+            />
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label for="normal-size-input" class="text-xs font-bold text-slate-200">
+                文字の大きさ（10 〜 500 px）
+              </label>
+              <span id="normal-size-badge" class="text-xs font-black text-emerald-300">120px</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <input
+                id="normal-size-range"
+                type="range"
+                min="10"
+                max="500"
+                value="120"
+                class="flex-1 accent-emerald-400"
+              />
+              <input
+                id="normal-size-input"
+                type="number"
+                min="10"
+                max="500"
+                value="120"
+                class="w-24 rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-sm text-white text-right focus:outline-none focus:border-emerald-400"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label for="normal-speed-input" class="text-xs font-bold text-slate-200">
+                文字の流れる速さ（1 〜 30）
+              </label>
+              <span id="normal-speed-badge" class="text-xs font-black text-emerald-300">10</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <input
+                id="normal-speed-range"
+                type="range"
+                min="1"
+                max="30"
+                value="10"
+                class="flex-1 accent-emerald-400"
+              />
+              <input
+                id="normal-speed-input"
+                type="number"
+                min="1"
+                max="30"
+                value="10"
+                class="w-24 rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-sm text-white text-right focus:outline-none focus:border-emerald-400"
+              />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="normal-sound-select" class="block text-xs font-bold text-slate-200 mb-1.5">
+                再生する音
+              </label>
+              <select
+                id="normal-sound-select"
+                class="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-400"
+              ></select>
+            </div>
+
+            <div>
+              <label for="normal-repeat-input" class="block text-xs font-bold text-slate-200 mb-1.5">
+                音の再生回数（1 〜 20）
+              </label>
+              <input
+                id="normal-repeat-input"
+                type="number"
+                min="1"
+                max="20"
+                value="1"
+                class="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-400"
+              />
+            </div>
+          </div>
+
+          <div>
+            <button
+              id="test-normal-sound-btn"
+              type="button"
+              class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 active:scale-95 text-white font-bold text-xs transition"
+            >
+              通常時の音をテスト再生
+            </button>
+          </div>
+        </section>
+
+        <!-- x秒以内の再検知・連チャン設定 -->
+        <section class="rounded-2xl bg-slate-800/60 border border-white/10 p-4 space-y-3.5">
+          <h3 class="text-sm font-black text-amber-300">x秒以内の再検知・連チャン設定</h3>
+
+          <div>
+            <label for="window-seconds-input" class="block text-xs font-bold text-slate-200 mb-1.5">
+              x秒の入力（0 〜 3600秒）
+            </label>
+            <input
+              id="window-seconds-input"
+              type="number"
+              min="0"
+              max="3600"
+              value="10"
+              class="w-full rounded-xl bg-slate-950 border border-white/15 px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-amber-400"
+            />
+          </div>
+
+          <label class="flex items-center gap-3 p-3 rounded-xl bg-slate-950/70 border border-white/10 cursor-pointer">
+            <input
+              id="same-as-first-checkbox"
+              type="checkbox"
+              class="w-5 h-5 accent-amber-400 rounded"
+            />
+            <span class="text-xs font-bold text-slate-100">
+              x秒以内に光を察知した時に1回目と同じにする
+            </span>
+          </label>
+
+          <label class="flex items-center gap-3 p-3 rounded-xl bg-slate-950/70 border border-white/10 cursor-pointer">
+            <input
+              id="renchan-mode-checkbox"
+              type="checkbox"
+              class="w-5 h-5 accent-rose-500 rounded"
+            />
+            <span class="text-xs font-bold text-slate-100">
+              2連チャンｷﾀ━(ﾟ∀ﾟ)━!!（連チャン数を1ずつ増加・3連チャン以降も音再生）
+            </span>
+          </label>
+
+          <div id="custom-second-fields" class="space-y-3.5 pt-1">
+            <div>
+              <label for="second-text-input" class="block text-xs font-bold text-slate-200 mb-1.5">
+                x秒以内時の流れる文字
+              </label>
+              <input
+                id="second-text-input"
+                type="text"
+                value="連チャンｷﾀ━(ﾟ∀ﾟ)━!!"
+                class="w-full rounded-xl bg-slate-950 border border-white/15 px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-amber-400"
+              />
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label for="second-speed-input" class="text-xs font-bold text-slate-200">
+                  x秒以内時の文字の流れる速さ（1 〜 30）
+                </label>
+                <span id="second-speed-badge" class="text-xs font-black text-amber-300">14</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <input
+                  id="second-speed-range"
+                  type="range"
+                  min="1"
+                  max="30"
+                  value="14"
+                  class="flex-1 accent-amber-400"
+                />
+                <input
+                  id="second-speed-input"
+                  type="number"
+                  min="1"
+                  max="30"
+                  value="14"
+                  class="w-24 rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-sm text-white text-right focus:outline-none focus:border-amber-400"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="second-sound-select" class="block text-xs font-bold text-slate-200 mb-1.5">
+                  x秒以内時の音
+                </label>
+                <select
+                  id="second-sound-select"
+                  class="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-400"
+                ></select>
+              </div>
+
+              <div>
+                <label for="second-repeat-input" class="block text-xs font-bold text-slate-200 mb-1.5">
+                  x秒以内時の再生回数（1 〜 20）
+                </label>
+                <input
+                  id="second-repeat-input"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value="2"
+                  class="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-400"
+                />
+              </div>
+            </div>
+
+            <div>
+              <button
+                id="test-second-sound-btn"
+                type="button"
+                class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 active:scale-95 text-white font-bold text-xs transition"
+              >
+                x秒以内時の音をテスト再生
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 保存・リセットアクション -->
+        <section class="flex flex-col sm:flex-row gap-2.5 pt-1">
+          <button
+            id="save-settings-btn"
+            type="button"
+            class="flex-1 py-3.5 px-5 rounded-2xl bg-sky-400 hover:bg-sky-300 active:scale-98 text-slate-950 font-black text-sm shadow-lg transition"
+          >
+            設定を保存
+          </button>
+          <button
+            id="reset-settings-btn"
+            type="button"
+            class="py-3.5 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-98 text-slate-200 font-bold text-xs border border-white/15 transition"
+          >
+            初期値に戻す
+          </button>
+        </section>
+
+        <div id="save-status-msg" class="hidden text-center text-xs font-bold text-emerald-300 py-1"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // =========================================================================
+      // 定数・ストレージキー定義
+      // =========================================================================
+      const STORAGE_KEY = 'naki_jjug_app_settings_v1';
+      const MAX_UPLOAD_SOUNDS = 5;
+
+      const BUILTIN_SOUNDS = [
+        { id: 'builtin:fanfare', label: '内蔵ファンファーレ音' },
+        { id: 'builtin:chime', label: '内蔵ハイトーンチャイム' },
+        { id: 'builtin:synth', label: '内蔵シンセアルペジオ' }
+      ];
+
+      const DEFAULT_SETTINGS = {
+        cameraFacing: 'environment', // 'environment' (バックカメラ) | 'user' (フロントカメラ)
+        threshold: 180,              // 1〜255
+        orientationMode: 'auto',     // 'auto' | '0' | '90' | '180' | '270'
+        normalText: 'ｷﾀ━(ﾟ∀ﾟ)━!!',
+        fontSize: 120,               // 10〜500
+        normalSpeed: 10,             // 1〜30
+        normalSoundId: 'builtin:fanfare',
+        normalRepeat: 1,             // 1〜20
+        windowSeconds: 10,           // 0〜3600
+        sameAsFirst: false,          // x秒以内に1回目と同じにする
+        renchanMode: true,           // 2連チャンｷﾀ━(ﾟ∀ﾟ)━!! モード
+        secondText: '連チャンｷﾀ━(ﾟ∀ﾟ)━!!',
+        secondSpeed: 14,             // 1〜30
+        secondSoundId: 'builtin:chime',
+        secondRepeat: 2              // 1〜20
+      };
+
+      // =========================================================================
+      // アプリケーション状態管理
+      // =========================================================================
+      const state = {
+        settings: loadSettings(),
+        // アップロード音源リスト: { id, name, dataUrl }
+        uploadedSounds: [],
+        // カメラ・ストリーム状態
+        stream: null,
+        cameraReady: false,
+        // 光検知・連チャン状態
+        isLightDetected: false,
+        darkTimestamp: null,         // 暗くなった時刻 (ms)
+        accumulatedDarkMs: 0,        // 累計暗転経過時間 (ms)
+        lastSampleTime: null,
+        isSecondsStopped: false,     // 秒数ストップボタンの状態
+        renchanCount: 0,             // 現在の連チャン数（0:未検知, 1:1回目, 2:2連チャン...）
+        // 画面向き・回転角度 (0, 90, 180, 270)
+        currentRotationDeg: 0,
+        // 文字アニメーション状態（重なり防止のため1つずつ流す）
+        activeMarquee: null,         // { el, pos, speedPxPerFrame, direction, axis }
+        pendingMarqueeConfig: null,  // 次に流す文字設定
+        // 音声再生管理
+        audioCtx: null,
+        audioBuffers: new Map(),     // soundId -> AudioBuffer
+        activeAudioElements: new Set()
+      };
+
+      // =========================================================================
+      // DOM要素参照
+      // =========================================================================
+      const dom = {
+        orientationStage: document.getElementById('orientation-stage'),
+        video: document.getElementById('camera-video'),
+        illumination: document.getElementById('rainbow-illumination'),
+        marqueeLayer: document.getElementById('marquee-layer'),
+        stopSecondsBtn: document.getElementById('stop-seconds-btn'),
+        openMenuBtn: document.getElementById('open-menu-btn'),
+        closeMenuBtn: document.getElementById('close-menu-btn'),
+        settingsDrawer: document.getElementById('settings-drawer'),
+        permissionOverlay: document.getElementById('permission-overlay'),
+        permDescription: document.getElementById('perm-description'),
+        permErrorBox: document.getElementById('perm-error-box'),
+        permErrorTitle: document.getElementById('perm-error-title'),
+        permErrorDetail: document.getElementById('perm-error-detail'),
+        browserGuidePanel: document.getElementById('browser-guide-panel'),
+        openBrowserSettingsBtn: document.getElementById('open-browser-settings-btn'),
+        retryCameraBtn: document.getElementById('retry-camera-btn'),
+        requestCameraBtn: document.getElementById('request-camera-btn'),
+        fullscreenOnlyBtn: document.getElementById('fullscreen-only-btn'),
+        // 設定入力要素
+        cameraFacingSelect: document.getElementById('camera-facing-select'),
+        thresholdRange: document.getElementById('threshold-range'),
+        thresholdInput: document.getElementById('threshold-input'),
+        thresholdValueBadge: document.getElementById('threshold-value-badge'),
+        orientationModeSelect: document.getElementById('orientation-mode-select'),
+        audioUploadInput: document.getElementById('audio-upload-input'),
+        uploadedCountBadge: document.getElementById('uploaded-count-badge'),
+        uploadedAudioList: document.getElementById('uploaded-audio-list'),
+        normalTextInput: document.getElementById('normal-text-input'),
+        normalSizeRange: document.getElementById('normal-size-range'),
+        normalSizeInput: document.getElementById('normal-size-input'),
+        normalSizeBadge: document.getElementById('normal-size-badge'),
+        normalSpeedRange: document.getElementById('normal-speed-range'),
+        normalSpeedInput: document.getElementById('normal-speed-input'),
+        normalSpeedBadge: document.getElementById('normal-speed-badge'),
+        normalSoundSelect: document.getElementById('normal-sound-select'),
+        normalRepeatInput: document.getElementById('normal-repeat-input'),
+        testNormalSoundBtn: document.getElementById('test-normal-sound-btn'),
+        windowSecondsInput: document.getElementById('window-seconds-input'),
+        sameAsFirstCheckbox: document.getElementById('same-as-first-checkbox'),
+        renchanModeCheckbox: document.getElementById('renchan-mode-checkbox'),
+        customSecondFields: document.getElementById('custom-second-fields'),
+        secondTextInput: document.getElementById('second-text-input'),
+        secondSpeedRange: document.getElementById('second-speed-range'),
+        secondSpeedInput: document.getElementById('second-speed-input'),
+        secondSpeedBadge: document.getElementById('second-speed-badge'),
+        secondSoundSelect: document.getElementById('second-sound-select'),
+        secondRepeatInput: document.getElementById('second-repeat-input'),
+        testSecondSoundBtn: document.getElementById('test-second-sound-btn'),
+        saveSettingsBtn: document.getElementById('save-settings-btn'),
+        resetSettingsBtn: document.getElementById('reset-settings-btn'),
+        saveStatusMsg: document.getElementById('save-status-msg')
+      };
+
+      // 輝度解析用オフスクリーンCanvas
+      const sampleCanvas = document.createElement('canvas');
+      sampleCanvas.width = 64;
+      sampleCanvas.height = 48;
+      const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+
+      // =========================================================================
+      // ユーティリティ・設定保存/復元
+      // =========================================================================
+      function clamp(val, min, max, fallback) {
+        const num = Number(val);
+        if (!Number.isFinite(num)) return fallback;
+        return Math.min(max, Math.max(min, Math.round(num)));
+      }
+
+      function sanitizeSettings(raw) {
+        const src = raw && typeof raw === 'object' ? raw : {};
+        return {
+          cameraFacing: src.cameraFacing === 'user' ? 'user' : 'environment',
+          threshold: clamp(src.threshold, 1, 255, DEFAULT_SETTINGS.threshold),
+          orientationMode: ['auto', '0', '90', '180', '270'].includes(String(src.orientationMode))
+            ? String(src.orientationMode)
+            : DEFAULT_SETTINGS.orientationMode,
+          normalText: typeof src.normalText === 'string' && src.normalText.length > 0
+            ? src.normalText
+            : DEFAULT_SETTINGS.normalText,
+          fontSize: clamp(src.fontSize, 10, 500, DEFAULT_SETTINGS.fontSize),
+          normalSpeed: clamp(src.normalSpeed, 1, 30, DEFAULT_SETTINGS.normalSpeed),
+          normalSoundId: typeof src.normalSoundId === 'string'
+            ? src.normalSoundId
+            : DEFAULT_SETTINGS.normalSoundId,
+          normalRepeat: clamp(src.normalRepeat, 1, 20, DEFAULT_SETTINGS.normalRepeat),
+          windowSeconds: clamp(src.windowSeconds, 0, 3600, DEFAULT_SETTINGS.windowSeconds),
+          sameAsFirst: Boolean(src.sameAsFirst),
+          renchanMode: src.renchanMode !== undefined ? Boolean(src.renchanMode) : DEFAULT_SETTINGS.renchanMode,
+          secondText: typeof src.secondText === 'string' && src.secondText.length > 0
+            ? src.secondText
+            : DEFAULT_SETTINGS.secondText,
+          secondSpeed: clamp(src.secondSpeed, 1, 30, DEFAULT_SETTINGS.secondSpeed),
+          secondSoundId: typeof src.secondSoundId === 'string'
+            ? src.secondSoundId
+            : DEFAULT_SETTINGS.secondSoundId,
+          secondRepeat: clamp(src.secondRepeat, 1, 20, DEFAULT_SETTINGS.secondRepeat)
+        };
+      }
+
+      function loadSettings() {
+        try {
+          const rawStr = window.localStorage ? window.localStorage.getItem(STORAGE_KEY) : null;
+          if (!rawStr) return { ...DEFAULT_SETTINGS };
+          return sanitizeSettings(JSON.parse(rawStr));
+        } catch (err) {
+          return { ...DEFAULT_SETTINGS };
+        }
+      }
+
+      function saveSettingsToStorage() {
+        try {
+          if (window.localStorage) {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state.settings));
+          }
+          showSaveMessage('設定を保存しました');
+        } catch (err) {
+          showSaveMessage('この環境では保存領域に制限がありますが、現在のセッションに反映されました');
+        }
+      }
+
+      function showSaveMessage(text) {
+        dom.saveStatusMsg.textContent = text;
+        dom.saveStatusMsg.classList.remove('hidden');
+        clearTimeout(showSaveMessage._timer);
+        showSaveMessage._timer = setTimeout(() => {
+          dom.saveStatusMsg.classList.add('hidden');
+        }, 2500);
+      }
+
+      // =========================================================================
+      // 全画面表示（Fullscreen API）
+      // =========================================================================
+      async function tryEnterFullscreen() {
+        try {
+          const docEl = document.documentElement;
+          if (document.fullscreenElement) return;
+          if (docEl.requestFullscreen) {
+            await docEl.requestFullscreen();
+          } else if (docEl.webkitRequestFullscreen) {
+            docEl.webkitRequestFullscreen();
+          }
+        } catch (err) {
+          // ブラウザやiframe環境でブロックされた場合は無視して継続
+        }
+      }
+
+      // =========================================================================
+      // カメラ起動・解放・権限エラー処理
+      // =========================================================================
+      function stopExistingCameraStream() {
+        if (state.stream) {
+          try {
+            state.stream.getTracks().forEach((track) => {
+              try {
+                track.stop();
+              } catch (e) {
+                // ignore
+              }
+            });
+          } catch (e) {
+            // ignore
+          }
+          state.stream = null;
+        }
+        try {
+          dom.video.srcObject = null;
+        } catch (e) {
+          // ignore
+        }
+        state.cameraReady = false;
+      }
+
+      async function startCamera(facingOverride) {
+        const facing = facingOverride || state.settings.cameraFacing || 'environment';
+        stopExistingCameraStream();
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          showCameraError(
+            'カメラAPIを利用できません',
+            'お使いのブラウザまたは表示環境でカメラ機能がサポートされていません。HTTPS環境または対応ブラウザで開いてください。'
+          );
+          return false;
+        }
+
+        // 制約条件を段階的に試行（他アプリ占有・厳格facingModeフォールバック対応）
+        const constraintCandidates = [
+          {
+            video: {
+              facingMode: { ideal: facing },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            },
+            audio: false
+          },
+          {
+            video: {
+              facingMode: facing
+            },
+            audio: false
+          },
+          {
+            video: true,
+            audio: false
+          }
+        ];
+
+        let lastError = null;
+        for (const constraints of constraintCandidates) {
+          try {
+            const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+            state.stream = mediaStream;
+            dom.video.srcObject = mediaStream;
+            // フロントカメラの場合は自然な鏡像表示（バックカメラは通常表示）
+            dom.video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+            await dom.video.play();
+            state.cameraReady = true;
+            hideCameraOverlay();
+            tryEnterFullscreen();
+            return true;
+          } catch (err) {
+            lastError = err;
+            stopExistingCameraStream();
+            // 権限拒否の場合は別制約で再試行しても拒否されるためループを抜ける
+            if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+              break;
+            }
+          }
+        }
+
+        handleCameraFailure(lastError);
+        return false;
+      }
+
+      function handleCameraFailure(err) {
+        const name = err && err.name ? err.name : '';
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          showCameraError(
+            'カメラの権限が許可されていません',
+            'カメラを使用するには権限の許可が必要です。ブラウザの権限設定からカメラを許可するか、「再試行する」を押してください。'
+          );
+        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+          showCameraError(
+            'カメラが他のアプリまたはタブで使用中です',
+            '別アプリや別タブでカメラが占有されている可能性があります。他のカメラ使用アプリやタブを閉じてから「再試行する」を押してください。'
+          );
+        } else if (name === 'OverconstrainedError') {
+          showCameraError(
+            '指定されたカメラの条件に一致しませんでした',
+            '選択中のカメラが利用できないため、別のカメラ選択または「再試行する」をお試しください。'
+          );
+        } else {
+          showCameraError(
+            'カメラの起動に失敗しました',
+            'カメラの接続状態やブラウザの権限設定を確認し、「再試行する」を押してください。'
+          );
+        }
+      }
+
+      function showCameraError(title, detail) {
+        dom.permissionOverlay.classList.remove('hidden-gate');
+        dom.permErrorBox.classList.remove('hidden');
+        dom.permErrorTitle.textContent = title;
+        dom.permErrorDetail.textContent = detail;
+      }
+
+      function hideCameraOverlay() {
+        dom.permissionOverlay.classList.add('hidden-gate');
+        dom.permErrorBox.classList.add('hidden');
+        dom.browserGuidePanel.classList.add('hidden');
+      }
+
+      // =========================================================================
+      // 画面の向き・上下逆さま対応 & 文字の流れる方向
+      // =========================================================================
+      function detectDeviceRotationDeg() {
+        if (state.settings.orientationMode !== 'auto') {
+          return Number(state.settings.orientationMode) || 0;
+        }
+
+        // Screen Orientation API を優先確認
+        const screenOrient = window.screen && window.screen.orientation;
+        if (screenOrient && typeof screenOrient.angle === 'number') {
+          const angle = ((screenOrient.angle % 360) + 360) % 360;
+          if (angle === 0 || angle === 90 || angle === 180 || angle === 270) {
+            return angle;
+          }
+        }
+
+        // window.orientation（iOS Safari / WebView等）
+        if (typeof window.orientation === 'number') {
+          const wAngle = ((window.orientation % 360) + 360) % 360;
+          if (wAngle === 0 || wAngle === 90 || wAngle === 180 || wAngle === 270) {
+            return wAngle;
+          }
+        }
+
+        return 0;
+      }
+
+      function applyOrientationTransform() {
+        const deg = detectDeviceRotationDeg();
+        state.currentRotationDeg = deg;
+
+        const isSideways = deg === 90 || deg === 270;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+
+        if (isSideways) {
+          dom.orientationStage.style.width = `${vh}px`;
+          dom.orientationStage.style.height = `${vw}px`;
+          dom.orientationStage.style.left = `${(vw - vh) / 2}px`;
+          dom.orientationStage.style.top = `${(vh - vw) / 2}px`;
+          dom.orientationStage.style.transform = `rotate(${deg}deg)`;
+        } else {
+          dom.orientationStage.style.width = `${vw}px`;
+          dom.orientationStage.style.height = `${vh}px`;
+          dom.orientationStage.style.left = '0px';
+          dom.orientationStage.style.top = '0px';
+          dom.orientationStage.style.transform = `rotate(${deg}deg)`;
+        }
+      }
+
+      // DeviceMotion（重力加速度）を使った上下逆さま・向き補助検出
+      function handleDeviceMotion(event) {
+        if (state.settings.orientationMode !== 'auto') return;
+        const acc = event.accelerationIncludingGravity;
+        if (!acc || typeof acc.x !== 'number' || typeof acc.y !== 'number') return;
+
+        // 画面がほぼ垂直に保持されている場合のみ傾き判定を反映
+        const z = typeof acc.z === 'number' ? Math.abs(acc.z) : 0;
+        if (z > 8.2) return;
+
+        let detected = null;
+        if (Math.abs(acc.y) > Math.abs(acc.x)) {
+          detected = acc.y < -4.5 ? 0 : acc.y > 4.5 ? 180 : null;
+        } else {
+          detected = acc.x > 4.5 ? 90 : acc.x < -4.5 ? 270 : null;
+        }
+
+        if (detected !== null && detected !== state.currentRotationDeg) {
+          state.currentRotationDeg = detected;
+          const isSideways = detected === 90 || detected === 270;
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          if (isSideways) {
+            dom.orientationStage.style.width = `${vh}px`;
+            dom.orientationStage.style.height = `${vw}px`;
+            dom.orientationStage.style.left = `${(vw - vh) / 2}px`;
+            dom.orientationStage.style.top = `${(vh - vw) / 2}px`;
+          } else {
+            dom.orientationStage.style.width = `${vw}px`;
+            dom.orientationStage.style.height = `${vh}px`;
+            dom.orientationStage.style.left = '0px';
+            dom.orientationStage.style.top = '0px';
+          }
+          dom.orientationStage.style.transform = `rotate(${detected}deg)`;
+        }
+      }
+
+      // =========================================================================
+      // Web Audio API + HTMLAudioElement による確実な音声再生
+      // =========================================================================
+      function ensureAudioContext() {
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) return null;
+          if (!state.audioCtx) {
+            state.audioCtx = new AudioCtx();
+          }
+          if (state.audioCtx.state === 'suspended') {
+            state.audioCtx.resume().catch(() => {});
+          }
+          return state.audioCtx;
+        } catch (err) {
+          return null;
+        }
+      }
+
+      // 内蔵シンセ音源の生成・再生（毎回確実に鳴る）
+      function playBuiltinSoundOnce(soundId) {
+        const ctx = ensureAudioContext();
+        if (!ctx) return;
+
+        const now = ctx.currentTime;
+        const playTone = (freq, startOffset, duration, type, gainPeak) => {
+          try {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = type || 'triangle';
+            osc.frequency.setValueAtTime(freq, now + startOffset);
+
+            gain.gain.setValueAtTime(0.0001, now + startOffset);
+            gain.gain.exponentialRampToValueAtTime(gainPeak || 0.25, now + startOffset + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + duration);
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(now + startOffset);
+            osc.stop(now + startOffset + duration + 0.02);
+          } catch (e) {
+            // ignore
+          }
+        };
+
+        if (soundId === 'builtin:chime') {
+          playTone(1046.5, 0.0, 0.14, 'sine', 0.28);
+          playTone(1318.5, 0.12, 0.14, 'sine', 0.28);
+          playTone(1567.98, 0.24, 0.26, 'triangle', 0.3);
+        } else if (soundId === 'builtin:synth') {
+          playTone(523.25, 0.0, 0.11, 'sawtooth', 0.18);
+          playTone(659.25, 0.09, 0.11, 'sawtooth', 0.18);
+          playTone(783.99, 0.18, 0.11, 'sawtooth', 0.18);
+          playTone(1046.5, 0.27, 0.24, 'triangle', 0.25);
+        } else {
+          // builtin:fanfare
+          playTone(587.33, 0.0, 0.12, 'square', 0.16);
+          playTone(783.99, 0.11, 0.12, 'square', 0.16);
+          playTone(987.77, 0.22, 0.12, 'square', 0.16);
+          playTone(1174.66, 0.33, 0.28, 'triangle', 0.26);
+        }
+      }
+
+      // アップロード音源の安全な取得と再生
+      function findUploadedSoundById(soundId) {
+        if (!soundId || typeof soundId !== 'string') return null;
+        return state.uploadedSounds.find((item) => item.id === soundId) || null;
+      }
+
+      async function playUploadedSoundOnce(uploadedItem) {
+        if (!uploadedItem || !uploadedItem.dataUrl) {
+          playBuiltinSoundOnce('builtin:fanfare');
+          return;
+        }
+
+        // Web Audio APIでデコード済みバッファがあれば高速・確実に再生
+        const ctx = ensureAudioContext();
+        if (ctx) {
+          try {
+            let buffer = state.audioBuffers.get(uploadedItem.id);
+            if (!buffer) {
+              const res = await fetch(uploadedItem.dataUrl);
+              const arrayBuf = await res.arrayBuffer();
+              buffer = await ctx.decodeAudioData(arrayBuf);
+              state.audioBuffers.set(uploadedItem.id, buffer);
+            }
+            const src = ctx.createBufferSource();
+            src.buffer = buffer;
+            src.connect(ctx.destination);
+            src.start(0);
+            return;
+          } catch (e) {
+            // AudioContextデコード失敗時はHTMLAudioElementへフォールバック
+          }
+        }
+
+        // HTMLAudioElement フォールバック（毎回新しいインスタンスまたはリセット再生）
+        try {
+          const audio = new Audio(uploadedItem.dataUrl);
+          audio.currentTime = 0;
+          state.activeAudioElements.add(audio);
+          audio.addEventListener('ended', () => {
+            state.activeAudioElements.delete(audio);
+          }, { once: true });
+          audio.addEventListener('error', () => {
+            state.activeAudioElements.delete(audio);
+            playBuiltinSoundOnce('builtin:fanfare');
+          }, { once: true });
+          const playPromise = audio.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {
+              state.activeAudioElements.delete(audio);
+              playBuiltinSoundOnce('builtin:fanfare');
+            });
+          }
+        } catch (err) {
+          playBuiltinSoundOnce('builtin:fanfare');
+        }
+      }
+
+      // 指定回数（repeatCount）音を鳴らす
+      function playConfiguredSound(soundId, repeatCount) {
+        const count = clamp(repeatCount, 1, 20, 1);
+        const uploaded = findUploadedSoundById(soundId);
+
+        for (let i = 0; i < count; i++) {
+          const delayMs = i * 520;
+          setTimeout(() => {
+            if (uploaded) {
+              playUploadedSoundOnce(uploaded);
+            } else {
+              playBuiltinSoundOnce(soundId);
+            }
+          }, delayMs);
+        }
+      }
+
+      // =========================================================================
+      // 音源アップロード（最大5つ）管理・選択リスト同期
+      // =========================================================================
+      function readFileAsDataUrl(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(new Error('ファイル読み込みに失敗しました'));
+          reader.readAsDataURL(file);
+        });
+      }
+
+      async function handleAudioUploadChange(event) {
+        try {
+          const files = Array.from(event.target.files || []);
+          if (files.length === 0) return;
+
+          const availableSlots = MAX_UPLOAD_SOUNDS - state.uploadedSounds.length;
+          if (availableSlots <= 0) {
+            showSaveMessage(`音源は最大${MAX_UPLOAD_SOUNDS}つまでアップロードできます`);
+            event.target.value = '';
+            return;
+          }
+
+          const targets = files.slice(0, availableSlots);
+          let newlyAddedId = null;
+
+          for (const file of targets) {
+            const dataUrl = await readFileAsDataUrl(file);
+            const id = `upload:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+            state.uploadedSounds.push({
+              id,
+              name: file.name || 'アップロード音源',
+              dataUrl
+            });
+            if (!newlyAddedId) newlyAddedId = id;
+          }
+
+          if (newlyAddedId) {
+            state.settings.normalSoundId = newlyAddedId;
+          }
+
+          renderUploadedAudioUI();
+          syncSoundSelectOptions();
+          if (files.length > availableSlots) {
+            showSaveMessage(`最大${MAX_UPLOAD_SOUNDS}つまでのため、${targets.length}件を追加しました`);
+          } else {
+            showSaveMessage(`${targets.length}件の音源を追加しました`);
+          }
+        } catch (err) {
+          showSaveMessage('音源の読み込み中にエラーが発生しました');
+        } finally {
+          event.target.value = '';
+        }
+      }
+
+      function removeUploadedSound(soundId) {
+        state.uploadedSounds = state.uploadedSounds.filter((item) => item.id !== soundId);
+        state.audioBuffers.delete(soundId);
+
+        if (state.settings.normalSoundId === soundId) {
+          state.settings.normalSoundId = 'builtin:fanfare';
+        }
+        if (state.settings.secondSoundId === soundId) {
+          state.settings.secondSoundId = 'builtin:chime';
+        }
+
+        renderUploadedAudioUI();
+        syncSoundSelectOptions();
+      }
+
+      function renderUploadedAudioUI() {
+        dom.uploadedCountBadge.textContent = `${state.uploadedSounds.length} / ${MAX_UPLOAD_SOUNDS}`;
+        dom.uploadedAudioList.innerHTML = '';
+
+        if (state.uploadedSounds.length === 0) {
+          const emptyLi = document.createElement('li');
+          emptyLi.className = 'text-slate-400 text-xs py-1';
+          emptyLi.textContent = 'アップロードされた音源はありません';
+          dom.uploadedAudioList.appendChild(emptyLi);
+          return;
+        }
+
+        state.uploadedSounds.forEach((item, idx) => {
+          const li = document.createElement('li');
+          li.className = 'flex items-center justify-between gap-2 rounded-xl bg-slate-950/80 border border-white/10 px-3 py-2';
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'truncate text-slate-100 font-medium';
+          nameSpan.textContent = `${idx + 1}. ${item.name}`;
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'shrink-0 px-2.5 py-1 rounded-lg bg-rose-600/80 hover:bg-rose-500 text-white text-xs font-bold transition';
+          delBtn.textContent = '削除';
+          delBtn.addEventListener('click', () => removeUploadedSound(item.id));
+
+          li.appendChild(nameSpan);
+          li.appendChild(delBtn);
+          dom.uploadedAudioList.appendChild(li);
+        });
+      }
+
+      function syncSoundSelectOptions() {
+        const allOptions = [
+          ...BUILTIN_SOUNDS.map((b) => ({ value: b.id, label: b.label })),
+          ...state.uploadedSounds.map((u, idx) => ({
+            value: u.id,
+            label: `音源${idx + 1}: ${u.name}`
+          }))
+        ];
+
+        const validValues = new Set(allOptions.map((o) => o.value));
+        if (!validValues.has(state.settings.normalSoundId)) {
+          state.settings.normalSoundId = 'builtin:fanfare';
+        }
+        if (!validValues.has(state.settings.secondSoundId)) {
+          state.settings.secondSoundId = 'builtin:chime';
+        }
+
+        [dom.normalSoundSelect, dom.secondSoundSelect].forEach((selectEl) => {
+          selectEl.innerHTML = '';
+          allOptions.forEach((opt) => {
+            const optionEl = document.createElement('option');
+            optionEl.value = opt.value;
+            optionEl.textContent = opt.label;
+            selectEl.appendChild(optionEl);
+          });
+        });
+
+        dom.normalSoundSelect.value = state.settings.normalSoundId;
+        dom.secondSoundSelect.value = state.settings.secondSoundId;
+      }
+
+      // =========================================================================
+      // 文字流し演出（重なり防止：流れ終わってから次を流す / 画面向き連動）
+      // =========================================================================
+      function getStageDimensions() {
+        const rect = dom.orientationStage.getBoundingClientRect();
+        return {
+          width: Math.max(320, dom.orientationStage.clientWidth || rect.width || window.innerWidth),
+          height: Math.max(320, dom.orientationStage.clientHeight || rect.height || window.innerHeight)
+        };
+      }
+
+      function createMarqueeElement(text, fontSizePx) {
+        const el = document.createElement('div');
+        el.className = 'marquee-item';
+        el.textContent = text;
+        el.style.fontSize = `${fontSizePx}px`;
+        return el;
+      }
+
+      function startNextMarqueeIfIdle() {
+        if (!state.isLightDetected) return;
+        if (state.activeMarquee) return;
+        if (!state.pendingMarqueeConfig) return;
+
+        const cfg = state.pendingMarqueeConfig;
+        const { width, height } = getStageDimensions();
+        const el = createMarqueeElement(cfg.text, cfg.fontSize);
+        dom.marqueeLayer.appendChild(el);
+
+        // 要素の実際の幅・高さを計測
+        const textWidth = el.offsetWidth || (cfg.text.length * cfg.fontSize * 0.65);
+        const textHeight = el.offsetHeight || (cfg.fontSize * 1.15);
+
+        // 画面の向き（0, 90, 180, 270）に合わせて流れる方向を設定
+        // 0°/180°は横方向、90°/270°は縦方向に流す
+        const deg = state.currentRotationDeg;
+        const pxPerFrame = Math.max(2, cfg.speed * 1.35);
+
+        let axis = 'x';
+        let startPos = width;
+        let endPos = -textWidth;
+        let stepDir = -1; // 右から左へ流れる基本方向
+
+        if (deg === 0) {
+          axis = 'x';
+          startPos = width;
+          endPos = -textWidth;
+          stepDir = -1;
+          el.style.top = `${Math.max(8, (height - textHeight) / 2)}px`;
+          el.style.left = '0px';
+          el.style.transform = `translate3d(${startPos}px, 0, 0)`;
+        } else if (deg === 180) {
+          axis = 'x';
+          startPos = -textWidth;
+          endPos = width;
+          stepDir = 1;
+          el.style.top = `${Math.max(8, (height - textHeight) / 2)}px`;
+          el.style.left = '0px';
+          el.style.transform = `translate3d(${startPos}px, 0, 0)`;
+        } else if (deg === 90) {
+          axis = 'y';
+          startPos = height;
+          endPos = -textWidth;
+          stepDir = -1;
+          el.style.left = `${Math.max(8, (width - textHeight) / 2)}px`;
+          el.style.top = '0px';
+          el.style.transformOrigin = 'left top';
+          el.style.transform = `translate3d(0, ${startPos}px, 0) rotate(90deg)`;
+        } else {
+          // 270°
+          axis = 'y';
+          startPos = -textWidth;
+          endPos = height;
+          stepDir = 1;
+          el.style.left = `${Math.max(8, (width - textHeight) / 2)}px`;
+          el.style.top = '0px';
+          el.style.transformOrigin = 'left top';
+          el.style.transform = `translate3d(0, ${startPos}px, 0) rotate(-90deg)`;
+        }
+
+        state.activeMarquee = {
+          el,
+          axis,
+          pos: startPos,
+          endPos,
+          stepDir,
+          speedPxPerFrame: pxPerFrame,
+          deg
+        };
+      }
+
+      function updateMarqueeAnimation() {
+        if (!state.activeMarquee) {
+          if (state.isLightDetected) {
+            startNextMarqueeIfIdle();
+          }
+          return;
+        }
+
+        const item = state.activeMarquee;
+        item.pos += item.stepDir * item.speedPxPerFrame;
+
+        if (item.axis === 'x') {
+          item.el.style.transform = `translate3d(${item.pos}px, 0, 0)`;
+        } else if (item.deg === 90) {
+          item.el.style.transform = `translate3d(0, ${item.pos}px, 0) rotate(90deg)`;
+        } else {
+          item.el.style.transform = `translate3d(0, ${item.pos}px, 0) rotate(-90deg)`;
+        }
+
+        const finished = item.stepDir < 0
+          ? item.pos <= item.endPos
+          : item.pos >= item.endPos;
+
+        // 現在の文字が完全に流れ終わってから削除し、次の文字を流す（重なり防止）
+        if (finished) {
+          try {
+            item.el.remove();
+          } catch (e) {
+            // ignore
+          }
+          state.activeMarquee = null;
+
+          if (state.isLightDetected) {
+            startNextMarqueeIfIdle();
+          }
+        }
+      }
+
+      function clearMarqueeCompletely() {
+        state.pendingMarqueeConfig = null;
+        if (state.activeMarquee && state.activeMarquee.el) {
+          try {
+            state.activeMarquee.el.remove();
+          } catch (e) {
+            // ignore
+          }
+        }
+        state.activeMarquee = null;
+        dom.marqueeLayer.innerHTML = '';
+      }
+
+      // =========================================================================
+      // 光検知・x秒以内判定・連チャンロジック
+      // =========================================================================
+      function sampleVideoBrightness() {
+        if (!state.cameraReady || dom.video.readyState < 2) {
+          return null;
+        }
+        try {
+          sampleCtx.drawImage(dom.video, 0, 0, sampleCanvas.width, sampleCanvas.height);
+          const frame = sampleCtx.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height).data;
+
+          let sum = 0;
+          let count = 0;
+          // 高速化のためRGB輝度平均を計算
+          for (let i = 0; i < frame.length; i += 4) {
+            const r = frame[i];
+            const g = frame[i + 1];
+            const b = frame[i + 2];
+            sum += 0.299 * r + 0.587 * g + 0.114 * b;
+            count++;
+          }
+          return count > 0 ? sum / count : 0;
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function updateDarkSecondsTimer(nowMs) {
+        if (state.lastSampleTime === null) {
+          state.lastSampleTime = nowMs;
+          return;
+        }
+        const deltaMs = Math.max(0, nowMs - state.lastSampleTime);
+        state.lastSampleTime = nowMs;
+
+        // 暗転中かつ「秒数ストップ」がオフのときだけ累計暗転時間を進める
+        if (!state.isLightDetected && state.darkTimestamp !== null && !state.isSecondsStopped) {
+          state.accumulatedDarkMs += deltaMs;
+        }
+      }
+
+      function onLightDetectedStart() {
+        state.isLightDetected = true;
+
+        const windowMs = clamp(state.settings.windowSeconds, 0, 3600, 10) * 1000;
+        const hadPreviousLight = state.darkTimestamp !== null;
+        const withinWindow = hadPreviousLight && state.accumulatedDarkMs <= windowMs;
+
+        if (!hadPreviousLight || !withinWindow) {
+          // 1回目（またはx秒を超えた新規検知）
+          state.renchanCount = 1;
+        } else {
+          // x秒以内に再び光を察知
+          if (state.settings.renchanMode) {
+            state.renchanCount = Math.max(2, state.renchanCount + 1);
+          } else {
+            state.renchanCount = 2;
+          }
+        }
+
+        // 暗転計測リセット（次の暗転に備える）
+        state.darkTimestamp = null;
+        state.accumulatedDarkMs = 0;
+
+        // 演出文字・音・再生回数の決定
+        const isSubsequentWithinWindow = state.renchanCount >= 2;
+        const useFirstConfig = !isSubsequentWithinWindow || state.settings.sameAsFirst;
+
+        let displayText = useFirstConfig ? state.settings.normalText : state.settings.secondText;
+        if (state.settings.renchanMode && state.renchanCount >= 2) {
+          displayText = `${state.renchanCount}連チャン${displayText}`;
+        }
+
+        const speed = useFirstConfig ? state.settings.normalSpeed : state.settings.secondSpeed;
+        const soundId = useFirstConfig ? state.settings.normalSoundId : state.settings.secondSoundId;
+        const repeatCount = useFirstConfig ? state.settings.normalRepeat : state.settings.secondRepeat;
+
+        state.pendingMarqueeConfig = {
+          text: displayText,
+          fontSize: clamp(state.settings.fontSize, 10, 500, 120),
+          speed: clamp(speed, 1, 30, 10)
+        };
+
+        // イルミネーション・文字レイヤー表示・音再生
+        dom.illumination.classList.add('active');
+        dom.marqueeLayer.classList.add('active');
+        startNextMarqueeIfIdle();
+        playConfiguredSound(soundId, repeatCount);
+      }
+
+      function onLightDetectedEnd(nowMs) {
+        state.isLightDetected = false;
+        state.darkTimestamp = nowMs;
+        state.accumulatedDarkMs = 0;
+
+        dom.illumination.classList.remove('active');
+        dom.marqueeLayer.classList.remove('active');
+        clearMarqueeCompletely();
+      }
+
+      function processLightDetectionLoop(nowMs) {
+        updateDarkSecondsTimer(nowMs);
+
+        const brightness = sampleVideoBrightness();
+        if (brightness !== null) {
+          const threshold = clamp(state.settings.threshold, 1, 255, 180);
+          const isBrightNow = brightness >= threshold;
+
+          if (isBrightNow && !state.isLightDetected) {
+            onLightDetectedStart();
+          } else if (!isBrightNow && state.isLightDetected) {
+            onLightDetectedEnd(nowMs);
+          }
+        }
+
+        updateMarqueeAnimation();
+        requestAnimationFrame(processLightDetectionLoop);
+      }
+
+      // =========================================================================
+      // 設定UIとstateの双方向同期
+      // =========================================================================
+      function syncFormFromState() {
+        const s = state.settings;
+        dom.cameraFacingSelect.value = s.cameraFacing;
+        dom.thresholdRange.value = s.threshold;
+        dom.thresholdInput.value = s.threshold;
+        dom.thresholdValueBadge.textContent = String(s.threshold);
+
+        dom.orientationModeSelect.value = s.orientationMode;
+        dom.normalTextInput.value = s.normalText;
+
+        dom.normalSizeRange.value = s.fontSize;
+        dom.normalSizeInput.value = s.fontSize;
+        dom.normalSizeBadge.textContent = `${s.fontSize}px`;
+
+        dom.normalSpeedRange.value = s.normalSpeed;
+        dom.normalSpeedInput.value = s.normalSpeed;
+        dom.normalSpeedBadge.textContent = String(s.normalSpeed);
+
+        dom.normalRepeatInput.value = s.normalRepeat;
+        dom.windowSecondsInput.value = s.windowSeconds;
+        dom.sameAsFirstCheckbox.checked = s.sameAsFirst;
+        dom.renchanModeCheckbox.checked = s.renchanMode;
+
+        dom.secondTextInput.value = s.secondText;
+        dom.secondSpeedRange.value = s.secondSpeed;
+        dom.secondSpeedInput.value = s.secondSpeed;
+        dom.secondSpeedBadge.textContent = String(s.secondSpeed);
+        dom.secondRepeatInput.value = s.secondRepeat;
+
+        syncSoundSelectOptions();
+        updateSecondFieldsVisibility();
+      }
+
+      function updateSecondFieldsVisibility() {
+        // 「1回目と同じにする」選択時はx秒以内専用テキスト・音・速さの入力を薄く表示（設定値自体は保持）
+        if (state.settings.sameAsFirst) {
+          dom.customSecondFields.classList.add('opacity-50');
+        } else {
+          dom.customSecondFields.classList.remove('opacity-50');
+        }
+      }
+
+      function bindLinkedNumberAndRange(rangeEl, numEl, badgeEl, min, max, suffix, onUpdate) {
+        const applyVal = (rawVal) => {
+          const val = clamp(rawVal, min, max, min);
+          rangeEl.value = String(val);
+          numEl.value = String(val);
+          if (badgeEl) badgeEl.textContent = `${val}${suffix || ''}`;
+          onUpdate(val);
+        };
+
+        rangeEl.addEventListener('input', () => applyVal(rangeEl.value));
+        numEl.addEventListener('input', () => {
+          if (numEl.value === '') return;
+          applyVal(numEl.value);
+        });
+        numEl.addEventListener('blur', () => applyVal(numEl.value));
+      }
+
+      function bindSettingsEvents() {
+        // カメラ切り替え（バック / フロント）
+        dom.cameraFacingSelect.addEventListener('change', async () => {
+          state.settings.cameraFacing = dom.cameraFacingSelect.value === 'user' ? 'user' : 'environment';
+          if (state.cameraReady) {
+            await startCamera(state.settings.cameraFacing);
+          }
+        });
+
+        // しきい値（1〜255）
+        bindLinkedNumberAndRange(
+          dom.thresholdRange,
+          dom.thresholdInput,
+          dom.thresholdValueBadge,
+          1,
+          255,
+          '',
+          (val) => { state.settings.threshold = val; }
+        );
+
+        // 画面向き・上下逆さま
+        dom.orientationModeSelect.addEventListener('change', () => {
+          state.settings.orientationMode = dom.orientationModeSelect.value;
+          applyOrientationTransform();
+        });
+
+        // 音源アップロード（最大5つ）
+        dom.audioUploadInput.addEventListener('change', handleAudioUploadChange);
+
+        // 通常時文字
+        dom.normalTextInput.addEventListener('input', () => {
+          state.settings.normalText = dom.normalTextInput.value;
+        });
+
+        // 文字の大きさ（最大500）
+        bindLinkedNumberAndRange(
+          dom.normalSizeRange,
+          dom.normalSizeInput,
+          dom.normalSizeBadge,
+          10,
+          500,
+          'px',
+          (val) => { state.settings.fontSize = val; }
+        );
+
+        // 通常時速さ
+        bindLinkedNumberAndRange(
+          dom.normalSpeedRange,
+          dom.normalSpeedInput,
+          dom.normalSpeedBadge,
+          1,
+          30,
+          '',
+          (val) => { state.settings.normalSpeed = val; }
+        );
+
+        // 通常時音・再生回数
+        dom.normalSoundSelect.addEventListener('change', () => {
+          state.settings.normalSoundId = dom.normalSoundSelect.value;
+        });
+        dom.normalRepeatInput.addEventListener('change', () => {
+          state.settings.normalRepeat = clamp(dom.normalRepeatInput.value, 1, 20, 1);
+          dom.normalRepeatInput.value = String(state.settings.normalRepeat);
+        });
+        dom.testNormalSoundBtn.addEventListener('click', () => {
+          playConfiguredSound(state.settings.normalSoundId, state.settings.normalRepeat);
+        });
+
+        // x秒入力（最大3600秒）
+        dom.windowSecondsInput.addEventListener('change', () => {
+          state.settings.windowSeconds = clamp(dom.windowSecondsInput.value, 0, 3600, 10);
+          dom.windowSecondsInput.value = String(state.settings.windowSeconds);
+        });
+
+        // 「x秒以内に1回目と同じにする」チェックボックス
+        dom.sameAsFirstCheckbox.addEventListener('change', () => {
+          state.settings.sameAsFirst = dom.sameAsFirstCheckbox.checked;
+          updateSecondFieldsVisibility();
+        });
+
+        // 「2連チャンｷﾀ━(ﾟ∀ﾟ)━!!」チェックボックス
+        dom.renchanModeCheckbox.addEventListener('change', () => {
+          state.settings.renchanMode = dom.renchanModeCheckbox.checked;
+        });
+
+        // x秒以内時文字・速さ・音・再生回数
+        dom.secondTextInput.addEventListener('input', () => {
+          state.settings.secondText = dom.secondTextInput.value;
+        });
+
+        bindLinkedNumberAndRange(
+          dom.secondSpeedRange,
+          dom.secondSpeedInput,
+          dom.secondSpeedBadge,
+          1,
+          30,
+          '',
+          (val) => { state.settings.secondSpeed = val; }
+        );
+
+        dom.secondSoundSelect.addEventListener('change', () => {
+          state.settings.secondSoundId = dom.secondSoundSelect.value;
+        });
+
+        dom.secondRepeatInput.addEventListener('change', () => {
+          state.settings.secondRepeat = clamp(dom.secondRepeatInput.value, 1, 20, 2);
+          dom.secondRepeatInput.value = String(state.settings.secondRepeat);
+        });
+
+        dom.testSecondSoundBtn.addEventListener('click', () => {
+          playConfiguredSound(state.settings.secondSoundId, state.settings.secondRepeat);
+        });
+
+        // 保存・リセット
+        dom.saveSettingsBtn.addEventListener('click', () => {
+          saveSettingsToStorage();
+        });
+
+        dom.resetSettingsBtn.addEventListener('click', () => {
+          state.settings = { ...DEFAULT_SETTINGS };
+          syncFormFromState();
+          applyOrientationTransform();
+          saveSettingsToStorage();
+        });
+
+        // メニュー開閉
+        dom.openMenuBtn.addEventListener('click', () => {
+          ensureAudioContext();
+          dom.settingsDrawer.classList.add('open');
+        });
+
+        dom.closeMenuBtn.addEventListener('click', () => {
+          dom.settingsDrawer.classList.remove('open');
+        });
+
+        dom.settingsDrawer.addEventListener('click', (e) => {
+          if (e.target === dom.settingsDrawer) {
+            dom.settingsDrawer.classList.remove('open');
+          }
+        });
+
+        // 光待機画面の秒数ストップボタン
+        dom.stopSecondsBtn.addEventListener('click', () => {
+          state.isSecondsStopped = !state.isSecondsStopped;
+          if (state.isSecondsStopped) {
+            dom.stopSecondsBtn.textContent = '秒数再開';
+            dom.stopSecondsBtn.classList.remove('text-amber-300', 'border-amber-400/40');
+            dom.stopSecondsBtn.classList.add('bg-amber-500', 'text-slate-950', 'border-amber-300');
+          } else {
+            dom.stopSecondsBtn.textContent = '秒数ストップ';
+            dom.stopSecondsBtn.classList.add('text-amber-300', 'border-amber-400/40');
+            dom.stopSecondsBtn.classList.remove('bg-amber-500', 'text-slate-950', 'border-amber-300');
+          }
+        });
+
+        // 権限リクエスト・エラー時ボタン
+        dom.requestCameraBtn.addEventListener('click', async () => {
+          ensureAudioContext();
+          await startCamera(state.settings.cameraFacing);
+        });
+
+        dom.retryCameraBtn.addEventListener('click', async () => {
+          ensureAudioContext();
+          await startCamera(state.settings.cameraFacing);
+        });
+
+        dom.openBrowserSettingsBtn.addEventListener('click', () => {
+          dom.browserGuidePanel.classList.toggle('hidden');
+        });
+
+        dom.fullscreenOnlyBtn.addEventListener('click', async () => {
+          ensureAudioContext();
+          await tryEnterFullscreen();
+        });
+
+        // 画面向き・リサイズ・可視状態変化
+        window.addEventListener('resize', applyOrientationTransform);
+        window.addEventListener('orientationchange', () => {
+          setTimeout(applyOrientationTransform, 120);
+        });
+        if (window.screen && window.screen.orientation && window.screen.orientation.addEventListener) {
+          window.screen.orientation.addEventListener('change', applyOrientationTransform);
+        }
+        window.addEventListener('devicemotion', handleDeviceMotion, { passive: true });
+
+        // 他タブ・バックグラウンド遷移時のストリーム整理と復帰
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) {
+            // バックグラウンド時に他アプリへカメラを譲れるよう一時停止/解放
+            stopExistingCameraStream();
+          } else if (dom.permissionOverlay.classList.contains('hidden-gate')) {
+            startCamera(state.settings.cameraFacing);
+          }
+        });
+
+        window.addEventListener('pagehide', () => {
+          stopExistingCameraStream();
+        });
+      }
+
+      // =========================================================================
+      // アプリ自動起動エントリポイント
+      // =========================================================================
+      function initApp() {
+        renderUploadedAudioUI();
+        syncFormFromState();
+        applyOrientationTransform();
+        bindSettingsEvents();
+
+        // アニメーションループ開始
+        requestAnimationFrame(processLightDetectionLoop);
+
+        // 自動起動：まずカメラ権限の許可を求める画面を表示しつつ、自動起動を試行
+        tryEnterFullscreen();
+        startCamera(state.settings.cameraFacing);
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initApp, { once: true });
+      } else {
+        initApp();
+      }
+    })();
+  </script>
+</body>
+</html>
